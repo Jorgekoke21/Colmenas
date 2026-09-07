@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Control de Varroa · Comparativa de colmenas</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   :root{
@@ -59,6 +60,18 @@
   .chip b{color:var(--tinta);font-size:14px}
   .chip small{font-size:11px;color:var(--tinta-suave)}
   #err{display:none;color:#C0392B;font-weight:600;padding:20px}
+  .upload-panel{display:flex;align-items:center;gap:12px;margin-bottom:18px;padding:12px 14px}
+  .upload-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+  .upload-button{font:inherit;font-size:13px;font-weight:700;cursor:pointer;border:1px solid var(--tinta);background:var(--tinta);color:#fff;padding:8px 13px;border-radius:9px;transition:.15s;white-space:nowrap}
+  .upload-button:hover{background:var(--miel-osc);border-color:var(--miel-osc)}
+  .upload-button:focus-visible,.drop-zone:focus-visible{outline:3px solid rgba(232,163,23,.42);outline-offset:2px}
+  #fileInput{display:none}
+  .drop-zone{display:flex;align-items:center;gap:8px;min-height:38px;flex:1;border:1px dashed var(--linea);border-radius:9px;padding:7px 12px;color:var(--tinta-suave);cursor:pointer;transition:.15s}
+  .drop-zone:hover,.drop-zone.is-dragover{border-color:var(--miel);background:var(--cera2)}
+  .drop-title{font-size:13px;font-weight:700;color:var(--tinta)}
+  .drop-help{font-size:12px}
+  .upload-status{font-size:12px;color:var(--tinta-suave);text-align:right;line-height:1.25}
+  .upload-status strong{color:var(--tinta)}
 
   @media(max-width:880px){
     body{padding:12px}
@@ -99,6 +112,10 @@
     .col-item{min-height:40px;padding:5px 4px;font-size:13px;gap:9px}
     .col-item input{width:18px;height:18px;flex:0 0 auto}
     .note{margin-top:12px}
+    .upload-panel{display:grid;grid-template-columns:1fr;gap:9px;margin-bottom:12px;padding:10px}
+    .upload-actions{justify-content:space-between}
+    .drop-zone{min-height:44px}
+    .upload-status{text-align:left}
   }
 
   @media(max-width:480px){
@@ -127,15 +144,25 @@
   </header>
   <p class="sub">Ácaros caídos por día en cada colmena a lo largo del tiempo. Más caída = mayor infestación.</p>
 
+  <div class="panel upload-panel">
+    <div class="upload-actions">
+      <label class="upload-button" for="fileInput">Cargar Excel</label>
+      <input id="fileInput" type="file" accept=".xlsx,.xls,.csv">
+      <button id="btnReset" type="button">Datos iniciales</button>
+    </div>
+    <div id="dropZone" class="drop-zone" role="button" tabindex="0" aria-label="Arrastrar un archivo Excel o seleccionarlo">
+      <span class="drop-title">Arrastra aquí tu Excel</span>
+      <span class="drop-help">.xlsx, .xls o .csv · los datos se procesan en este navegador</span>
+    </div>
+    <div id="uploadStatus" class="upload-status" aria-live="polite"><strong>Datos iniciales</strong><br>28 colmenas · 48 mediciones</div>
+  </div>
+
   <div class="layout">
     <div class="panel">
       <div class="toolbar">
         <div class="grp">
           <span class="lbl">Familias</span>
-          <button class="fam-btn on" data-fam="GON"><span class="dot" style="background:var(--gon)"></span>GON</button>
-          <button class="fam-btn on" data-fam="LOZANO"><span class="dot" style="background:var(--lozano)"></span>LOZANO</button>
-          <button class="fam-btn on" data-fam="BELLO"><span class="dot" style="background:var(--bello)"></span>BELLO</button>
-          <button class="fam-btn on" data-fam="MARC"><span class="dot" style="background:var(--marc)"></span>MARC</button>
+          <div id="familyButtons" class="family-buttons"></div>
         </div>
         <div class="grp" style="margin-left:auto">
           <span class="lbl">Escala Y</span>
@@ -155,7 +182,7 @@
         <button id="btnNone" style="flex:1">Ninguna</button>
       </div>
       <div class="side-scroll" id="sideList"></div>
-      <div class="note">
+      <div class="note" id="dataNote">
         <b>Datos corregidos:</b> dos fechas escritas como <i>10/082026</i> se leyeron como <b>10/08/2026</b>. Se omitió una medición sin valor (GON 27, 09/07).
       </div>
     </div>
@@ -163,8 +190,9 @@
 </div>
 
 <script>
-const DATOS = {"BELLO 10A": {"familia": "BELLO", "puntos": [{"x": "2026-07-12", "y": 0.33}, {"x": "2026-07-21", "y": 0.0}]}, "BELLO 10P": {"familia": "BELLO", "puntos": [{"x": "2026-07-21", "y": 0.0}]}, "BELLO 11P1": {"familia": "BELLO", "puntos": [{"x": "2026-07-12", "y": 1.33}, {"x": "2026-08-10", "y": 31.0}]}, "BELLO 19B": {"familia": "BELLO", "puntos": [{"x": "2026-07-12", "y": 7.66}, {"x": "2026-08-10", "y": 26.0}]}, "BELLO 1A": {"familia": "BELLO", "puntos": [{"x": "2026-07-21", "y": 1.33}]}, "BELLO 1B": {"familia": "BELLO", "puntos": [{"x": "2026-07-12", "y": 0.66}]}, "BELLO 21B": {"familia": "BELLO", "puntos": [{"x": "2026-07-12", "y": 0.0}, {"x": "2026-08-10", "y": 1.0}]}, "BELLO 23B": {"familia": "BELLO", "puntos": [{"x": "2026-07-21", "y": 0.33}, {"x": "2026-08-10", "y": 0.66}]}, "BELLO 25B": {"familia": "BELLO", "puntos": [{"x": "2026-07-12", "y": 0.33}, {"x": "2026-08-10", "y": 4.0}]}, "BELLO 26B": {"familia": "BELLO", "puntos": [{"x": "2026-07-21", "y": 0.33}, {"x": "2026-08-10", "y": 0.66}]}, "BELLO 2P": {"familia": "BELLO", "puntos": [{"x": "2026-07-12", "y": 8.33}, {"x": "2026-08-10", "y": 49.0}]}, "BELLO 8A1": {"familia": "BELLO", "puntos": [{"x": "2026-07-21", "y": 8.0}]}, "BELLO 9A1": {"familia": "BELLO", "puntos": [{"x": "2026-07-12", "y": 2.0}, {"x": "2026-08-10", "y": 10.0}]}, "GON 25": {"familia": "GON", "puntos": [{"x": "2026-04-27", "y": 0.0}, {"x": "2026-07-05", "y": 7.0}, {"x": "2026-07-20", "y": 10.0}, {"x": "2026-07-31", "y": 60.0}]}, "GON 26": {"familia": "GON", "puntos": [{"x": "2026-07-20", "y": 0.0}]}, "GON 27": {"familia": "GON", "puntos": [{"x": "2026-08-11", "y": 0.7}]}, "GON 29": {"familia": "GON", "puntos": [{"x": "2026-07-05", "y": 0.0}, {"x": "2026-07-20", "y": 1.0}, {"x": "2026-07-31", "y": 0.5}]}, "LOZANO 1": {"familia": "LOZANO", "puntos": [{"x": "2026-07-12", "y": 1.28}, {"x": "2026-08-10", "y": 1.14}]}, "LOZANO 2": {"familia": "LOZANO", "puntos": [{"x": "2026-07-12", "y": 0.25}, {"x": "2026-08-10", "y": 1.4}]}, "LOZANO 3": {"familia": "LOZANO", "puntos": [{"x": "2026-07-12", "y": 1.0}, {"x": "2026-08-10", "y": 1.7}]}, "LOZANO 4": {"familia": "LOZANO", "puntos": [{"x": "2026-07-12", "y": 0.25}, {"x": "2026-08-10", "y": 0.25}]}, "LOZANO 5": {"familia": "LOZANO", "puntos": [{"x": "2026-07-12", "y": 1.5}, {"x": "2026-08-10", "y": 0.9}]}, "LOZANO 6": {"familia": "LOZANO", "puntos": [{"x": "2026-07-12", "y": 0.5}, {"x": "2026-08-10", "y": 4.2}]}, "MARC 10 SIX": {"familia": "MARC", "puntos": [{"x": "2026-07-15", "y": 0.1}]}, "MARC 11 SIX": {"familia": "MARC", "puntos": [{"x": "2026-07-15", "y": 0.5}]}, "MARC 14 PEN": {"familia": "MARC", "puntos": [{"x": "2026-07-15", "y": 0.1}]}, "MARC 6 PEN": {"familia": "MARC", "puntos": [{"x": "2026-07-15", "y": 0.2}]}, "MARC 7 SIX": {"familia": "MARC", "puntos": [{"x": "2026-07-15", "y": 0.8}]}};
+let DATOS = {"BELLO 10A": {"familia": "BELLO", "puntos": [{"x": "2026-07-12", "y": 0.33}, {"x": "2026-07-21", "y": 0.0}]}, "BELLO 10P": {"familia": "BELLO", "puntos": [{"x": "2026-07-21", "y": 0.0}]}, "BELLO 11P1": {"familia": "BELLO", "puntos": [{"x": "2026-07-12", "y": 1.33}, {"x": "2026-08-10", "y": 31.0}]}, "BELLO 19B": {"familia": "BELLO", "puntos": [{"x": "2026-07-12", "y": 7.66}, {"x": "2026-08-10", "y": 26.0}]}, "BELLO 1A": {"familia": "BELLO", "puntos": [{"x": "2026-07-21", "y": 1.33}]}, "BELLO 1B": {"familia": "BELLO", "puntos": [{"x": "2026-07-12", "y": 0.66}]}, "BELLO 21B": {"familia": "BELLO", "puntos": [{"x": "2026-07-12", "y": 0.0}, {"x": "2026-08-10", "y": 1.0}]}, "BELLO 23B": {"familia": "BELLO", "puntos": [{"x": "2026-07-21", "y": 0.33}, {"x": "2026-08-10", "y": 0.66}]}, "BELLO 25B": {"familia": "BELLO", "puntos": [{"x": "2026-07-12", "y": 0.33}, {"x": "2026-08-10", "y": 4.0}]}, "BELLO 26B": {"familia": "BELLO", "puntos": [{"x": "2026-07-21", "y": 0.33}, {"x": "2026-08-10", "y": 0.66}]}, "BELLO 2P": {"familia": "BELLO", "puntos": [{"x": "2026-07-12", "y": 8.33}, {"x": "2026-08-10", "y": 49.0}]}, "BELLO 8A1": {"familia": "BELLO", "puntos": [{"x": "2026-07-21", "y": 8.0}]}, "BELLO 9A1": {"familia": "BELLO", "puntos": [{"x": "2026-07-12", "y": 2.0}, {"x": "2026-08-10", "y": 10.0}]}, "GON 25": {"familia": "GON", "puntos": [{"x": "2026-04-27", "y": 0.0}, {"x": "2026-07-05", "y": 7.0}, {"x": "2026-07-20", "y": 10.0}, {"x": "2026-07-31", "y": 60.0}]}, "GON 26": {"familia": "GON", "puntos": [{"x": "2026-07-20", "y": 0.0}]}, "GON 27": {"familia": "GON", "puntos": [{"x": "2026-08-11", "y": 0.7}]}, "GON 29": {"familia": "GON", "puntos": [{"x": "2026-07-05", "y": 0.0}, {"x": "2026-07-20", "y": 1.0}, {"x": "2026-07-31", "y": 0.5}]}, "LOZANO 1": {"familia": "LOZANO", "puntos": [{"x": "2026-07-12", "y": 1.28}, {"x": "2026-08-10", "y": 1.14}]}, "LOZANO 2": {"familia": "LOZANO", "puntos": [{"x": "2026-07-12", "y": 0.25}, {"x": "2026-08-10", "y": 1.4}]}, "LOZANO 3": {"familia": "LOZANO", "puntos": [{"x": "2026-07-12", "y": 1.0}, {"x": "2026-08-10", "y": 1.7}]}, "LOZANO 4": {"familia": "LOZANO", "puntos": [{"x": "2026-07-12", "y": 0.25}, {"x": "2026-08-10", "y": 0.25}]}, "LOZANO 5": {"familia": "LOZANO", "puntos": [{"x": "2026-07-12", "y": 1.5}, {"x": "2026-08-10", "y": 0.9}]}, "LOZANO 6": {"familia": "LOZANO", "puntos": [{"x": "2026-07-12", "y": 0.5}, {"x": "2026-08-10", "y": 4.2}]}, "MARC 10 SIX": {"familia": "MARC", "puntos": [{"x": "2026-07-15", "y": 0.1}]}, "MARC 11 SIX": {"familia": "MARC", "puntos": [{"x": "2026-07-15", "y": 0.5}]}, "MARC 14 PEN": {"familia": "MARC", "puntos": [{"x": "2026-07-15", "y": 0.1}]}, "MARC 6 PEN": {"familia": "MARC", "puntos": [{"x": "2026-07-15", "y": 0.2}]}, "MARC 7 SIX": {"familia": "MARC", "puntos": [{"x": "2026-07-15", "y": 0.8}]}};
 const FAM_COLOR = {GON:'#3A7D44', LOZANO:'#2F6FAD', BELLO:'#D9822B', MARC:'#7E4B9E'};
+const FAM_PALETTE = ['#6A6DB5','#9A6A43','#2F8F83','#A74962','#7A7A3D'];
 
 // ---- fechas -> número (ms) sin librerías externas ----
 function fechaMs(iso){ const [y,m,d]=iso.split('-').map(Number); return Date.UTC(y,m-1,d); }
@@ -196,12 +224,96 @@ function hsl(h,s,l){
   return '#'+to(r)+to(g)+to(b);
 }
 
-const familias={};
-Object.keys(DATOS).forEach(k=>{const f=DATOS[k].familia;(familias[f]=familias[f]||[]).push(k);});
-const orden=['GON','LOZANO','BELLO','MARC'];
-const meta={};
-orden.forEach(f=>{const cols=tonos(FAM_COLOR[f],familias[f].length);
-  familias[f].forEach((n,i)=>{meta[n]={color:cols[i],familia:f};});});
+let familias={};
+let orden=[];
+let meta={};
+function colorFamilia(f){
+  if(FAM_COLOR[f])return FAM_COLOR[f];
+  const i=Object.keys(familias).filter(n=>!FAM_COLOR[n]).indexOf(f);
+  return FAM_PALETTE[Math.max(0,i)%FAM_PALETTE.length];
+}
+function reconstruirModelo(){
+  familias={};
+  Object.keys(DATOS).forEach(k=>{const f=DATOS[k].familia;(familias[f]=familias[f]||[]).push(k);});
+  const preferidas=['GON','LOZANO','BELLO','MARC'];
+  orden=[...preferidas.filter(f=>familias[f]),...Object.keys(familias).filter(f=>!preferidas.includes(f)).sort()];
+  meta={};
+  orden.forEach(f=>{const cols=tonos(colorFamilia(f),familias[f].length);
+    familias[f].forEach((n,i)=>{meta[n]={color:cols[i],familia:f};});});
+}
+reconstruirModelo();
+
+const DATOS_INICIALES=JSON.parse(JSON.stringify(DATOS));
+function normalizarTexto(v){
+  return String(v??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+}
+function fechaDesdeCelda(v){
+  if(v instanceof Date&&!Number.isNaN(v.getTime())){
+    const y=v.getFullYear(),m=String(v.getMonth()+1).padStart(2,'0'),d=String(v.getDate()).padStart(2,'0');
+    return `${y}-${m}-${d}`;
+  }
+  if(typeof v==='number'&&Number.isFinite(v)){
+    const dt=new Date(Date.UTC(1899,11,30)+v*86400000);
+    return Number.isNaN(dt.getTime())?null:dt.toISOString().slice(0,10);
+  }
+  const s=String(v??'').trim();
+  if(!s)return null;
+  let m=s.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})$/);
+  if(!m)m=s.match(/^(\d{1,2})\/(\d{2})(\d{4})$/);
+  if(m){
+    const d=Number(m[1]),mo=Number(m[2]),y=Number(m[3]),dt=new Date(Date.UTC(y,mo-1,d));
+    if(dt.getUTCFullYear()===y&&dt.getUTCMonth()===mo-1&&dt.getUTCDate()===d)return dt.toISOString().slice(0,10);
+    return null;
+  }
+  const dt=new Date(s);
+  return Number.isNaN(dt.getTime())?null:dt.toISOString().slice(0,10);
+}
+function numeroDesdeCelda(v){
+  if(typeof v==='number'&&Number.isFinite(v))return v;
+  const s=String(v??'').trim().replace(',','.');
+  if(!s)return null;
+  const n=Number(s);
+  return Number.isFinite(n)?n:null;
+}
+function encontrarCabecera(filas){
+  for(let i=0;i<Math.min(filas.length,30);i++){
+    const c=filas[i].map(normalizarTexto);
+    const colmena=c.findIndex(v=>v.includes('colmena'));
+    const fecha=c.findIndex(v=>v==='data'||v==='fecha'||v.includes('fecha'));
+    const varroa=c.findIndex(v=>v.includes('caida varroa')||(v.includes('varroa')&&v.includes('dia')));
+    if(colmena>=0&&fecha>=0&&varroa>=0)return {fila:i,colmena,fecha,varroa};
+  }
+  return null;
+}
+async function leerExcel(file){
+  if(typeof XLSX==='undefined')throw new Error('No se pudo cargar el lector de Excel. Comprueba tu conexión y vuelve a abrir la página.');
+  const libro=XLSX.read(await file.arrayBuffer(),{type:'array',cellDates:true});
+  let seleccion=null;
+  for(const nombre of libro.SheetNames){
+    const hoja=libro.Sheets[nombre],filas=XLSX.utils.sheet_to_json(hoja,{header:1,defval:null,raw:true});
+    const cabecera=encontrarCabecera(filas);
+    if(cabecera){seleccion={nombre,filas,cabecera};break;}
+  }
+  if(!seleccion)throw new Error('No encontré una hoja con las columnas Nº COLMENA, DATA y 1 caida varroa dia.');
+  const grupos=new Map(); let omitidas=0;
+  for(const fila of seleccion.filas.slice(seleccion.cabecera.fila+1)){
+    const nombre=String(fila[seleccion.cabecera.colmena]??'').trim();
+    const fecha=fechaDesdeCelda(fila[seleccion.cabecera.fecha]);
+    const valor=numeroDesdeCelda(fila[seleccion.cabecera.varroa]);
+    if(!nombre||!fecha)continue;
+    if(valor===null){omitidas++;continue;}
+    if(!grupos.has(nombre))grupos.set(nombre,new Map());
+    const dias=grupos.get(nombre);
+    if(!dias.has(fecha))dias.set(fecha,[]);
+    dias.get(fecha).push(valor);
+  }
+  const datos={};
+  for(const [nombre,dias] of grupos){
+    datos[nombre]={familia:nombre.split(/\s+/)[0].toUpperCase(),puntos:[...dias.entries()].sort((a,b)=>a[0].localeCompare(b[0])).map(([x,valores])=>({x,y:valores.reduce((a,b)=>a+b,0)/valores.length}))};
+  }
+  if(!Object.keys(datos).length)throw new Error('La hoja contiene las columnas correctas, pero no hay mediciones de caída válidas.');
+  return {datos,hoja:seleccion.nombre,omitidas};
+}
 
 const esMovil=()=>window.matchMedia('(max-width:880px)').matches;
 const esMovilPequeno=()=>window.matchMedia('(max-width:480px)').matches;
@@ -333,17 +445,37 @@ function iniciar(){
   chart.$responsiveMobile=undefined;
   actualizarResponsive();
   construirSelectorMovil();
+  construirBotonesFamilia();
   construirPanel();
   actualizarResponsive();
   chart.update('none');
   actualizarStats();
 }
 
+function construirBotonesFamilia(){
+  const familyButtons=document.getElementById('familyButtons');
+  if(!familyButtons)return;
+  familyButtons.textContent='';
+  orden.forEach(f=>{
+    const btn=document.createElement('button');btn.className='fam-btn on';btn.dataset.fam=f;btn.type='button';
+    const dot=document.createElement('span');dot.className='dot';dot.style.background=colorFamilia(f);
+    btn.appendChild(dot);btn.appendChild(document.createTextNode(f));
+    btn.addEventListener('click',()=>{
+      btn.classList.toggle('on');
+      const visibles=new Set([...document.querySelectorAll('.fam-btn.on')].map(b=>b.dataset.fam));
+      Object.keys(DATOS).forEach(n=>setColmena(n,visibles.has(meta[n].familia)));
+      actualizarResponsive();chart.update();actualizarStats();
+    });
+    familyButtons.appendChild(btn);
+  });
+}
+
 function construirPanel(){
   const sideList=document.getElementById('sideList');
+  sideList.textContent='';
   orden.forEach(f=>{
     const h=document.createElement('div');h.className='fam-head';
-    h.innerHTML=`<span class="dot" style="background:${FAM_COLOR[f]}"></span>${f} <span style="color:#9a8f7c;font-weight:500">(${familias[f].length})</span>`;
+    h.innerHTML=`<span class="dot" style="background:${colorFamilia(f)}"></span>${f} <span style="color:#9a8f7c;font-weight:500">(${familias[f].length})</span>`;
     h.title='Ver solo esta familia';
     h.addEventListener('click',()=>setFamilias(new Set([f])));
     const wrap=document.createElement('div');wrap.style.margin='4px 0 10px';
@@ -374,14 +506,6 @@ function setFamilias(setVisibles){
   actualizarResponsive();chart.update();actualizarStats();
 }
 
-document.querySelectorAll('.fam-btn').forEach(btn=>{
-  btn.addEventListener('click',()=>{
-    btn.classList.toggle('on');
-    const visibles=new Set([...document.querySelectorAll('.fam-btn.on')].map(b=>b.dataset.fam));
-    Object.keys(DATOS).forEach(n=>setColmena(n,visibles.has(meta[n].familia)));
-    actualizarResponsive();chart.update();actualizarStats();
-  });
-});
 document.getElementById('btnAll').addEventListener('click',()=>{
   Object.keys(DATOS).forEach(n=>setColmena(n,true));
   document.querySelectorAll('.fam-btn').forEach(b=>b.classList.add('on'));
@@ -413,6 +537,50 @@ document.getElementById('btnLabels').addEventListener('click',e=>{
   chart.$etiquetasManual=true;
   actualizarResponsive();chart.update();
 });
+
+function mostrarError(texto){
+  const err=document.getElementById('err');
+  err.textContent=texto;err.style.display='block';
+}
+function ocultarError(){document.getElementById('err').style.display='none';}
+function actualizarNotaArchivo(nombre,hoja,omitidas){
+  const note=document.getElementById('dataNote');
+  note.innerHTML='<b>Archivo cargado:</b> ';
+  note.appendChild(document.createTextNode(`${nombre} · hoja ${hoja}.`));
+  if(omitidas)note.appendChild(document.createTextNode(` Se omitieron ${omitidas} fila${omitidas===1?'':'s'} sin fecha o sin valor de caída.`));
+}
+function actualizarDesdeArchivo(resultado,file){
+  DATOS=resultado.datos;reconstruirModelo();construirBotonesFamilia();construirPanel();
+  chart.data.datasets=buildDatasets();
+  chart.data.datasets.forEach((d,i)=>{chart.getDatasetMeta(i).hidden=false;});
+  actualizarResponsive();chart.update();actualizarStats();ocultarError();
+  const medidas=Object.values(DATOS).reduce((total,d)=>total+d.puntos.length,0);
+  document.getElementById('uploadStatus').innerHTML=`<strong>${file.name}</strong><br>${Object.keys(DATOS).length} colmenas · ${medidas} mediciones`;
+  actualizarNotaArchivo(file.name,resultado.hoja,resultado.omitidas);
+}
+function restaurarDatosIniciales(){
+  DATOS=JSON.parse(JSON.stringify(DATOS_INICIALES));reconstruirModelo();construirBotonesFamilia();construirPanel();
+  chart.data.datasets=buildDatasets();
+  chart.data.datasets.forEach((d,i)=>{chart.getDatasetMeta(i).hidden=false;});
+  actualizarResponsive();chart.update();actualizarStats();ocultarError();
+  document.getElementById('uploadStatus').innerHTML='<strong>Datos iniciales</strong><br>28 colmenas · 48 mediciones';
+  document.getElementById('dataNote').innerHTML='<b>Datos corregidos:</b> dos fechas escritas como <i>10/082026</i> se leyeron como <b>10/08/2026</b>. Se omitió una medición sin valor (GON 27, 09/07).';
+  document.getElementById('fileInput').value='';
+}
+async function procesarArchivo(file){
+  if(!file)return;
+  document.getElementById('uploadStatus').textContent='Leyendo el archivo…';
+  try{actualizarDesdeArchivo(await leerExcel(file),file);}
+  catch(error){document.getElementById('uploadStatus').textContent='No se pudo cargar el archivo';mostrarError(error.message||'No se pudo leer el archivo.');}
+}
+const fileInput=document.getElementById('fileInput'),dropZone=document.getElementById('dropZone');
+fileInput.addEventListener('change',e=>procesarArchivo(e.target.files[0]));
+dropZone.addEventListener('click',()=>fileInput.click());
+dropZone.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();fileInput.click();}});
+dropZone.addEventListener('dragover',e=>{e.preventDefault();dropZone.classList.add('is-dragover');});
+dropZone.addEventListener('dragleave',()=>dropZone.classList.remove('is-dragover'));
+dropZone.addEventListener('drop',e=>{e.preventDefault();dropZone.classList.remove('is-dragover');procesarArchivo(e.dataTransfer.files[0]);});
+document.getElementById('btnReset').addEventListener('click',restaurarDatosIniciales);
 
 function actualizarStats(){
   const statsEl=document.getElementById('stats');
