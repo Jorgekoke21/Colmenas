@@ -6,6 +6,8 @@
 <title>Control de Varroa · Comparativa de colmenas</title>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-config.js"></script>
 <style>
   :root{
     --miel:#E8A317; --miel-osc:#B8791A; --panal:#F5B841;
@@ -33,6 +35,7 @@
   button{font:inherit;font-size:13px;font-weight:600;cursor:pointer;
     border:1px solid var(--linea);background:#fff;color:var(--tinta);
     padding:6px 12px;border-radius:999px;transition:.15s;}
+  button:disabled{opacity:.65;cursor:wait}
   button:hover{border-color:var(--miel);background:var(--cera2)}
   button:focus-visible,.col-item:focus-within,.fam-head:focus-visible{outline:3px solid rgba(232,163,23,.42);outline-offset:2px}
   button.on{background:var(--tinta);color:#fff;border-color:var(--tinta)}
@@ -148,7 +151,7 @@
     <div class="upload-actions">
       <label class="upload-button" for="fileInput">Cargar Excel</label>
       <input id="fileInput" type="file" accept=".xlsx,.xls,.csv">
-      <button id="btnReset" type="button">Datos iniciales</button>
+      <button id="btnSave" type="button">Guardar</button>
     </div>
     <div id="dropZone" class="drop-zone" role="button" tabindex="0" aria-label="Arrastrar un archivo Excel o seleccionarlo">
       <span class="drop-title">Arrastra aquí tu Excel</span>
@@ -244,6 +247,11 @@ function reconstruirModelo(){
 reconstruirModelo();
 
 const DATOS_INICIALES=JSON.parse(JSON.stringify(DATOS));
+let ARCHIVO_ACTUAL='Datos iniciales';
+const SUPABASE_CONFIG=window.VARROA_SUPABASE||{};
+const clienteSupabase=window.supabase&&SUPABASE_CONFIG.url&&SUPABASE_CONFIG.key
+  ? window.supabase.createClient(SUPABASE_CONFIG.url,SUPABASE_CONFIG.key)
+  : null;
 function normalizarTexto(v){
   return String(v??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
 }
@@ -413,7 +421,7 @@ function construirSelectorMovil(){
   });
 }
 
-function iniciar(){
+async function iniciar(){
   if(typeof Chart==='undefined'){document.getElementById('err').style.display='block';return;}
   const ctx=document.getElementById('chart');
   chart=new Chart(ctx,{
@@ -450,6 +458,7 @@ function iniciar(){
   actualizarResponsive();
   chart.update('none');
   actualizarStats();
+  await cargarDatosPublicados();
 }
 
 function construirBotonesFamilia(){
@@ -550,6 +559,7 @@ function actualizarNotaArchivo(nombre,hoja,omitidas){
   if(omitidas)note.appendChild(document.createTextNode(` Se omitieron ${omitidas} fila${omitidas===1?'':'s'} sin fecha o sin valor de caída.`));
 }
 function actualizarDesdeArchivo(resultado,file){
+  ARCHIVO_ACTUAL=file.name;
   DATOS=resultado.datos;reconstruirModelo();construirBotonesFamilia();construirPanel();
   chart.data.datasets=buildDatasets();
   chart.data.datasets.forEach((d,i)=>{chart.getDatasetMeta(i).hidden=false;});
@@ -558,14 +568,64 @@ function actualizarDesdeArchivo(resultado,file){
   document.getElementById('uploadStatus').innerHTML=`<strong>${file.name}</strong><br>${Object.keys(DATOS).length} colmenas · ${medidas} mediciones`;
   actualizarNotaArchivo(file.name,resultado.hoja,resultado.omitidas);
 }
-function restaurarDatosIniciales(){
-  DATOS=JSON.parse(JSON.stringify(DATOS_INICIALES));reconstruirModelo();construirBotonesFamilia();construirPanel();
+
+function medidasActuales(){
+  return Object.values(DATOS).reduce((total,d)=>total+d.puntos.length,0);
+}
+function aplicarDatos(datos){
+  DATOS=datos;reconstruirModelo();construirBotonesFamilia();construirPanel();
   chart.data.datasets=buildDatasets();
   chart.data.datasets.forEach((d,i)=>{chart.getDatasetMeta(i).hidden=false;});
   actualizarResponsive();chart.update();actualizarStats();ocultarError();
-  document.getElementById('uploadStatus').innerHTML='<strong>Datos iniciales</strong><br>28 colmenas · 48 mediciones';
-  document.getElementById('dataNote').innerHTML='<b>Datos corregidos:</b> dos fechas escritas como <i>10/082026</i> se leyeron como <b>10/08/2026</b>. Se omitió una medición sin valor (GON 27, 09/07).';
-  document.getElementById('fileInput').value='';
+}
+async function cargarDatosPublicados(){
+  if(!clienteSupabase)return;
+  const {data,error}=await clienteSupabase.from('varroa_public_state')
+    .select('payload,source_file,updated_at').eq('id','default').maybeSingle();
+  if(error){
+    console.warn('No se pudieron leer los datos publicados de Supabase.',error);
+    return;
+  }
+  if(!data||!data.payload||typeof data.payload!=='object')return;
+  aplicarDatos(data.payload);
+  ARCHIVO_ACTUAL=data.source_file||'Datos publicados';
+  const actualizado=data.updated_at?new Date(data.updated_at).toLocaleString('es-ES'):'recientemente';
+  document.getElementById('uploadStatus').innerHTML=`<strong>Datos publicados</strong><br>${Object.keys(DATOS).length} colmenas · ${medidasActuales()} mediciones`;
+  document.getElementById('dataNote').textContent=`Guardados desde ${ARCHIVO_ACTUAL} · última actualización: ${actualizado}.`;
+}
+async function asegurarSesion(){
+  const {data}=await clienteSupabase.auth.getSession();
+  if(data&&data.session)return true;
+  const email=window.prompt('Correo de tu usuario Supabase:');
+  if(!email)return false;
+  const password=window.prompt('Contraseña de tu usuario Supabase:');
+  if(!password)return false;
+  const resultado=await clienteSupabase.auth.signInWithPassword({email,password});
+  if(resultado.error)throw resultado.error;
+  return true;
+}
+async function guardarDatosPublicados(){
+  const boton=document.getElementById('btnSave');
+  if(!clienteSupabase){
+    mostrarError('Supabase todavía no está configurado. Completa supabase-config.js con la URL y la publishable/anon key del proyecto.');
+    return;
+  }
+  boton.disabled=true;boton.textContent='Guardando…';
+  try{
+    if(!await asegurarSesion())return;
+    const {error}=await clienteSupabase.from('varroa_public_state').upsert({
+      id:'default',payload:DATOS,source_file:ARCHIVO_ACTUAL,updated_at:new Date().toISOString()
+    },{onConflict:'id'});
+    if(error)throw error;
+    document.getElementById('uploadStatus').innerHTML=`<strong>Datos guardados</strong><br>${Object.keys(DATOS).length} colmenas · ${medidasActuales()} mediciones`;
+    document.getElementById('dataNote').textContent='Estos datos ya son los que verá cualquier persona que abra la aplicación.';
+    ocultarError();
+  }catch(error){
+    console.error(error);
+    mostrarError(`No se pudieron guardar los datos: ${error.message||'comprueba la configuración y los permisos de Supabase.'}`);
+  }finally{
+    boton.disabled=false;boton.textContent='Guardar';
+  }
 }
 async function procesarArchivo(file){
   if(!file)return;
@@ -580,7 +640,7 @@ dropZone.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preve
 dropZone.addEventListener('dragover',e=>{e.preventDefault();dropZone.classList.add('is-dragover');});
 dropZone.addEventListener('dragleave',()=>dropZone.classList.remove('is-dragover'));
 dropZone.addEventListener('drop',e=>{e.preventDefault();dropZone.classList.remove('is-dragover');procesarArchivo(e.dataTransfer.files[0]);});
-document.getElementById('btnReset').addEventListener('click',restaurarDatosIniciales);
+document.getElementById('btnSave').addEventListener('click',guardarDatosPublicados);
 
 function actualizarStats(){
   const statsEl=document.getElementById('stats');
